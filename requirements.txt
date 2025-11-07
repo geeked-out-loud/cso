@@ -1,0 +1,15 @@
+# Requirements for CSO Visual Simulator
+
+# Core dependencies (Python 3.13 compatible)
+flask>=3.0.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+
+# Production server
+gunicorn>=21.2.0
+
+# Optional: for enhanced plotting (uncomment if needed)
+# plotly>=5.17.0
+
+# Development dependencies (optional)
+# pytest>=7.4.3

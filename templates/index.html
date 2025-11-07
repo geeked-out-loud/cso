@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSO Visual Simulator - Cat Swarm Optimization</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <img src="{{ url_for('static', filename='cat.png') }}" alt="Cat" class="logo">
+                <div class="brand">
+                    <h2>CSO Simulator</h2>
+                    <span class="tagline">Cat Swarm Optimization</span>
+                </div>
+            </div>
+
+            <!-- Control Section -->
+            <div class="control-section">
+                <h3 class="section-title">Simulation Controls</h3>
+                
+                <div class="control-buttons">
+                    <button id="start-btn" class="btn btn-primary">
+                        <img src="{{ url_for('static', filename='start.png') }}" alt="Start">
+                        <span>Start</span>
+                    </button>
+                    <button id="stop-btn" class="btn btn-secondary" disabled>
+                        <img src="{{ url_for('static', filename='stop.png') }}" alt="Stop">
+                        <span>Stop</span>
+                    </button>
+                    <button id="reset-btn" class="btn btn-secondary">
+                        <img src="{{ url_for('static', filename='reset.png') }}" alt="Reset">
+                        <span>Reset</span>
+                    </button>
+                </div>
+
+                <!-- Status Display -->
+                <div class="status-card">
+                    <div class="status-header">
+                        <span class="status-label">Status</span>
+                        <span id="status-indicator" class="status-dot ready"></span>
+                    </div>
+                    <div id="status-text" class="status-message">Ready to start</div>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parameters Section -->
+            <div class="params-section">
+                <h3 class="section-title">Parameters</h3>
+                
+                <div class="param-accordion">
+                    <details class="param-group" open>
+                        <summary>Population Settings</summary>
+                        <div class="param-content">
+                            <div class="param-item">
+                                <label for="n_cats">Number of Cats</label>
+                                <div class="input-group">
+                                    <input type="number" id="n_cats" value="30" min="10" max="100">
+                                    <span class="input-hint">10-100</span>
+                                </div>
+                            </div>
+                            <div class="param-item">
+                                <label for="max_iter">Max Iterations</label>
+                                <div class="input-group">
+                                    <input type="number" id="max_iter" value="50" min="10" max="200">
+                                    <span class="input-hint">10-200</span>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="param-group">
+                        <summary>Algorithm Settings</summary>
+                        <div class="param-content">
+                            <div class="param-item">
+                                <label for="MR">Mixture Ratio (MR)</label>
+                                <div class="input-group">
+                                    <input type="number" id="MR" value="0.3" min="0.1" max="0.9" step="0.1">
+                                    <span class="input-hint">0.1-0.9</span>
+                                </div>
+                            </div>
+                            <div class="param-item">
+                                <label for="SMP">Seeking Memory Pool</label>
+                                <div class="input-group">
+                                    <input type="number" id="SMP" value="5" min="2" max="10">
+                                    <span class="input-hint">2-10</span>
+                                </div>
+                            </div>
+                            <div class="param-item">
+                                <label for="SRD">Seeking Range</label>
+                                <div class="input-group">
+                                    <input type="number" id="SRD" value="0.2" min="0.05" max="0.5" step="0.05">
+                                    <span class="input-hint">0.05-0.5</span>
+                                </div>
+                            </div>
+                            <div class="param-item">
+                                <label for="CDC">Dimension Change</label>
+                                <div class="input-group">
+                                    <input type="number" id="CDC" value="0.8" min="0.1" max="1.0" step="0.1">
+                                    <span class="input-hint">0.1-1.0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="param-group">
+                        <summary>Velocity Settings</summary>
+                        <div class="param-content">
+                            <div class="param-item">
+                                <label for="c1">Acceleration (c1)</label>
+                                <div class="input-group">
+                                    <input type="number" id="c1" value="2.0" min="0.5" max="4.0" step="0.1">
+                                    <span class="input-hint">0.5-4.0</span>
+                                </div>
+                            </div>
+                            <div class="param-item">
+                                <label for="w">Inertia Weight (w)</label>
+                                <div class="input-group">
+                                    <input type="number" id="w" value="0.5" min="0.1" max="1.0" step="0.1">
+                                    <span class="input-hint">0.1-1.0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <div class="top-bar">
+                <div class="page-title">
+                    <h1>Live Visualization</h1>
+                    <p class="subtitle">Rastrigin Function Optimization</p>
+                </div>
+                
+                <div class="playback-controls">
+                    <button id="prev-frame" class="icon-btn" disabled>
+                        <img src="{{ url_for('static', filename='previous.png') }}" alt="Previous">
+                    </button>
+                    <button id="play-pause" class="icon-btn" disabled>
+                        <img src="{{ url_for('static', filename='start.png') }}" alt="Play">
+                    </button>
+                    <button id="next-frame" class="icon-btn" disabled>
+                        <img src="{{ url_for('static', filename='next.png') }}" alt="Next">
+                    </button>
+                    <span id="frame-counter" class="frame-info">Frame 0 / 0</span>
+                </div>
+            </div>
+
+            <!-- Visualization Area -->
+            <div class="viz-container">
+                <div class="viz-card">
+                    <div id="loading-spinner" class="loading-overlay" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Running simulation...</p>
+                    </div>
+                    
+                    <img id="viz-image" src="" alt="Visualization" class="viz-image">
+                    
+                    <div id="viz-placeholder" class="viz-placeholder">
+                        <img src="{{ url_for('static', filename='cat.png') }}" alt="Placeholder" class="placeholder-icon">
+                        <h3>Ready to Explore</h3>
+                        <p>Configure parameters and click "Start" to begin the simulation</p>
+                        <div class="legend">
+                            <div class="legend-item">
+                                <span class="legend-dot seeking"></span>
+                                <span>Seeking Mode (Exploration)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot tracing"></span>
+                                <span>Tracing Mode (Exploitation)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot best"></span>
+                                <span>Global Best</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Grid -->
+                <div class="results-grid" id="results-panel" style="display: none;">
+                    <div class="result-card">
+                        <div class="result-label">Best Fitness</div>
+                        <div class="result-value" id="result-fitness">-</div>
+                    </div>
+                    <div class="result-card">
+                        <div class="result-label">Best Position</div>
+                        <div class="result-value" id="result-position">-</div>
+                    </div>
+                    <div class="result-card">
+                        <div class="result-label">Distance to Optimum</div>
+                        <div class="result-value" id="result-distance">-</div>
+                    </div>
+                </div>
+
+                <!-- Convergence Chart -->
+                <div class="convergence-card" id="convergence-section" style="display: none;">
+                    <h3 class="card-title">Convergence Analysis</h3>
+                    <img id="convergence-plot" src="" alt="Convergence plot" class="convergence-image">
+                </div>
+            </div>
+        </main>
+    </div>
+
+        </main>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
