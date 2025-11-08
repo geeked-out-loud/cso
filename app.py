@@ -29,6 +29,23 @@ simulation_managers = {}  # {session_id: SimulationManager}
 simulation_locks = {}     # {session_id: threading.Lock}
 orphaned_sessions = set()  # Track sessions with running sims but disconnected clients
 
+# Ensure frames directory exists at startup
+FRAMES_DIR = os.path.join(os.path.dirname(__file__), 'static', 'frames')
+print(f"[STARTUP] Checking frames directory: {FRAMES_DIR}")
+try:
+    os.makedirs(FRAMES_DIR, exist_ok=True)
+    print(f"[STARTUP] Frames directory ready")
+    # Test write permissions
+    test_file = os.path.join(FRAMES_DIR, '.test')
+    with open(test_file, 'w') as f:
+        f.write('test')
+    os.remove(test_file)
+    print(f"[STARTUP] Write permissions confirmed")
+except Exception as e:
+    print(f"[STARTUP] ERROR with frames directory: {e}")
+    import traceback
+    traceback.print_exc()
+
 
 class SimulationManager:
     """Manages simulation state and execution for a single session."""
@@ -59,60 +76,78 @@ class SimulationManager:
         params : dict
             Simulation parameters
         """
-        self.is_running = True
-        self.mark_accessed()
-        
-        # Session-specific output directory
-        output_dir = f'static/frames/{self.session_id}'
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Clean previous frames for THIS session
-        visualizer = CSOVisualizer(rastrigin.evaluate, bounds=(-5.12, 5.12))
-        visualizer.clean_frames(output_dir=output_dir)
-        
-        # Initialize optimizer
-        self.optimizer = CatSwarmOptimizer(
-            fitness_func=rastrigin.evaluate,
-            dim=2,
-            n_cats=params.get('n_cats', 30),
-            max_iter=params.get('max_iter', 50),
-            MR=params.get('MR', 0.3),
-            SMP=params.get('SMP', 5),
-            SRD=params.get('SRD', 0.2),
-            CDC=params.get('CDC', 0.8),
-            c1=params.get('c1', 2.0),
-            w=params.get('w', 0.5),
-            bounds=(-5.12, 5.12)
-        )
-        
-        # Run optimization
-        print(f"[Session {self.session_id}] Starting optimization...")
-        self.results = self.optimizer.optimize(verbose=True)
-        
-        # Create visualizer
-        self.visualizer = visualizer
-        
-        # Generate frames in session-specific directory
-        print(f"[Session {self.session_id}] Generating visualization frames...")
-        self.frame_paths = self.visualizer.create_animation_frames(
-            self.results['history'],
-            output_dir=output_dir,
-            frame_prefix='frame'
-        )
-        
-        # Generate convergence plot in session-specific directory
-        self.convergence_path = f'{output_dir}/convergence.png'
-        self.visualizer.plot_convergence(
-            self.results['history'],
-            save_path=self.convergence_path
-        )
-        
-        self.total_frames = len(self.frame_paths)
-        self.current_frame = 0
-        self.is_running = False
-        self.mark_accessed()
-        
-        print(f"[Session {self.session_id}] Simulation complete! Generated {self.total_frames} frames.")
+        try:
+            self.is_running = True
+            self.mark_accessed()
+            
+            # Session-specific output directory
+            output_dir = f'static/frames/{self.session_id}'
+            print(f"[Session {self.session_id}] Creating directory: {output_dir}")
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"[Session {self.session_id}] Directory created successfully")
+            
+            # Clean previous frames for THIS session
+            print(f"[Session {self.session_id}] Initializing visualizer...")
+            visualizer = CSOVisualizer(rastrigin.evaluate, bounds=(-5.12, 5.12))
+            visualizer.clean_frames(output_dir=output_dir)
+            print(f"[Session {self.session_id}] Cleaned previous frames")
+            
+            # Initialize optimizer
+            print(f"[Session {self.session_id}] Initializing optimizer with params: {params}")
+            self.optimizer = CatSwarmOptimizer(
+                fitness_func=rastrigin.evaluate,
+                dim=2,
+                n_cats=params.get('n_cats', 30),
+                max_iter=params.get('max_iter', 50),
+                MR=params.get('MR', 0.3),
+                SMP=params.get('SMP', 5),
+                SRD=params.get('SRD', 0.2),
+                CDC=params.get('CDC', 0.8),
+                c1=params.get('c1', 2.0),
+                w=params.get('w', 0.5),
+                bounds=(-5.12, 5.12)
+            )
+            print(f"[Session {self.session_id}] Optimizer initialized")
+            
+            # Run optimization
+            print(f"[Session {self.session_id}] Starting optimization...")
+            self.results = self.optimizer.optimize(verbose=True)
+            print(f"[Session {self.session_id}] Optimization complete")
+            
+            # Create visualizer
+            self.visualizer = visualizer
+            
+            # Generate frames in session-specific directory
+            print(f"[Session {self.session_id}] Generating visualization frames...")
+            self.frame_paths = self.visualizer.create_animation_frames(
+                self.results['history'],
+                output_dir=output_dir,
+                frame_prefix='frame'
+            )
+            print(f"[Session {self.session_id}] Generated {len(self.frame_paths)} frames")
+            
+            # Generate convergence plot in session-specific directory
+            self.convergence_path = f'{output_dir}/convergence.png'
+            print(f"[Session {self.session_id}] Creating convergence plot...")
+            self.visualizer.plot_convergence(
+                self.results['history'],
+                save_path=self.convergence_path
+            )
+            print(f"[Session {self.session_id}] Convergence plot created")
+            
+            self.total_frames = len(self.frame_paths)
+            self.current_frame = 0
+            self.is_running = False
+            self.mark_accessed()
+            
+            print(f"[Session {self.session_id}] Simulation complete! Generated {self.total_frames} frames.")
+            
+        except Exception as e:
+            print(f"[Session {self.session_id}] FATAL ERROR in run_simulation: {e}")
+            import traceback
+            traceback.print_exc()
+            self.is_running = False
+            raise
 
 
 def get_or_create_session_id():
@@ -241,9 +276,24 @@ def start_simulation():
         simulation_locks[session_id] = threading.Lock()
     
     # Run simulation in background thread for this session
-    thread = threading.Thread(target=manager.run_simulation, args=(params,))
+    print(f"[Session {session_id}] Starting background thread with params: {params}")
+    
+    def run_with_error_handling():
+        """Wrapper to catch any thread errors."""
+        try:
+            print(f"[Session {session_id}] Thread executing...")
+            manager.run_simulation(params)
+            print(f"[Session {session_id}] Thread completed successfully")
+        except Exception as e:
+            print(f"[Session {session_id}] Thread error: {e}")
+            import traceback
+            traceback.print_exc()
+            manager.is_running = False
+    
+    thread = threading.Thread(target=run_with_error_handling)
     thread.daemon = True
     thread.start()
+    print(f"[Session {session_id}] Background thread started")
     
     return jsonify({
         'success': True,
