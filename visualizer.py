@@ -8,7 +8,14 @@ overlaid, distinguishing between seeking and tracing modes.
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-GUI backend for Flask
+
+# Configure matplotlib for headless server environment
 import matplotlib.pyplot as plt
+plt.ioff()  # Turn off interactive mode
+import matplotlib.font_manager
+# Disable font caching to avoid hanging on first use
+matplotlib.font_manager._load_fontmanager(try_read_cache=False)
+
 from matplotlib import cm
 import os
 
@@ -144,8 +151,17 @@ class CSOVisualizer:
         
         # Save or return
         if save_path:
-            plt.savefig(save_path, dpi=100, bbox_inches='tight')
-            plt.close(fig)
+            print(f"[Visualizer] Saving figure to: {save_path}")
+            try:
+                plt.savefig(save_path, dpi=100, bbox_inches='tight')
+                print(f"[Visualizer] Successfully saved: {save_path}")
+            except Exception as e:
+                print(f"[Visualizer] ERROR saving figure: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+            finally:
+                plt.close(fig)
             return save_path
         else:
             return fig
@@ -169,13 +185,18 @@ class CSOVisualizer:
         list
             List of frame file paths
         """
+        print(f"[Visualizer] Creating animation frames in: {output_dir}")
+        
         # Create output directory if needed
         os.makedirs(output_dir, exist_ok=True)
+        print(f"[Visualizer] Directory ready")
         
         frame_paths = []
         n_iterations = len(history['positions'])
+        print(f"[Visualizer] Processing {n_iterations} iterations")
         
         for i in range(n_iterations):
+            print(f"[Visualizer] Creating frame {i+1}/{n_iterations}")
             positions = history['positions'][i]
             modes = history['modes'][i]
             fitness = history['global_best_fitness'][i]
@@ -188,10 +209,13 @@ class CSOVisualizer:
             
             # Generate frame
             frame_path = os.path.join(output_dir, f'{frame_prefix}_{i:04d}.png')
+            print(f"[Visualizer] Plotting frame {i} to {frame_path}")
             self.plot_frame(positions, modes, global_best, i, fitness, 
                           save_path=frame_path)
             frame_paths.append(frame_path)
+            print(f"[Visualizer] Frame {i} complete")
         
+        print(f"[Visualizer] All {len(frame_paths)} frames created successfully")
         return frame_paths
     
     def plot_convergence(self, history, save_path=None):
@@ -210,6 +234,7 @@ class CSOVisualizer:
         str or Figure
             Save path or Figure object
         """
+        print(f"[Visualizer] Creating convergence plot")
         fig, ax = plt.subplots(figsize=(10, 6))
         
         iterations = range(len(history['global_best_fitness']))
@@ -240,8 +265,17 @@ class CSOVisualizer:
         plt.tight_layout()
         
         if save_path:
-            plt.savefig(save_path, dpi=100, bbox_inches='tight')
-            plt.close(fig)
+            print(f"[Visualizer] Saving convergence plot to: {save_path}")
+            try:
+                plt.savefig(save_path, dpi=100, bbox_inches='tight')
+                print(f"[Visualizer] Convergence plot saved successfully")
+            except Exception as e:
+                print(f"[Visualizer] ERROR saving convergence plot: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+            finally:
+                plt.close(fig)
             return save_path
         else:
             return fig
