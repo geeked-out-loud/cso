@@ -1,37 +1,12 @@
-*.pyc
+# Python cache
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
 
-# Virtual Environment
-venv/
-env/
-ENV/
-.venv
-
-# Flask
-instance/
-.webassets-cache
-
-# IDEs
+# IDE
 .vscode/
-.idea/
-*.swp
-*.swo
-*~
 
-# OS
-.DS_Store
-Thumbs.db
+# Generated frames (created per session at runtime)
+static/frames/*/
 
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-.cache/
-
-# Don't commit generated frames (they'll be created on the fly)
-# static/frames/*.png
-# But we keep the directory
-!static/frames/.gitkeep
+# Tests
+tests/

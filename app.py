@@ -1,18 +1,12 @@
-"""
-Flask Web Application for CSO Visual Simulator
-
-This app provides a web interface to:
-- Configure CSO parameters
-- Run simulations
-- Visualize cat movements on Rastrigin landscape
-- Display convergence curves
-"""
-
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, session
 import os
 import json
 import threading
 from datetime import datetime
+import requests
+import secrets
+import shutil
+import time
 
 from cso import CatSwarmOptimizer
 from rastrigin import rastrigin
@@ -21,16 +15,26 @@ from visualizer import CSOVisualizer
 
 app = Flask(__name__)
 
-# Global state
-current_simulation = None
-simulation_lock = threading.Lock()
-simulation_running = False
+# Secret key for session management (required for Flask sessions)
+app.secret_key = secrets.token_hex(16)
+
+# Configure session to be persistent across browser refreshes
+app.config['SESSION_COOKIE_NAME'] = 'cso_session'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 7200  # 2 hours
+
+# Global state - now a dictionary of session managers
+simulation_managers = {}  # {session_id: SimulationManager}
+simulation_locks = {}     # {session_id: threading.Lock}
+orphaned_sessions = set()  # Track sessions with running sims but disconnected clients
 
 
 class SimulationManager:
-    """Manages simulation state and execution."""
+    """Manages simulation state and execution for a single session."""
     
-    def __init__(self):
+    def __init__(self, session_id):
+        self.session_id = session_id
         self.optimizer = None
         self.visualizer = None
         self.results = None
@@ -39,6 +43,12 @@ class SimulationManager:
         self.current_frame = 0
         self.total_frames = 0
         self.convergence_path = None
+        self.last_accessed = time.time()  # For cleanup
+        self.created_at = datetime.now()
+    
+    def mark_accessed(self):
+        """Update last access timestamp."""
+        self.last_accessed = time.time()
     
     def run_simulation(self, params):
         """
@@ -50,10 +60,15 @@ class SimulationManager:
             Simulation parameters
         """
         self.is_running = True
+        self.mark_accessed()
         
-        # Clean previous frames
+        # Session-specific output directory
+        output_dir = f'static/frames/{self.session_id}'
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Clean previous frames for THIS session
         visualizer = CSOVisualizer(rastrigin.evaluate, bounds=(-5.12, 5.12))
-        visualizer.clean_frames()
+        visualizer.clean_frames(output_dir=output_dir)
         
         # Initialize optimizer
         self.optimizer = CatSwarmOptimizer(
@@ -71,21 +86,22 @@ class SimulationManager:
         )
         
         # Run optimization
+        print(f"[Session {self.session_id}] Starting optimization...")
         self.results = self.optimizer.optimize(verbose=True)
         
         # Create visualizer
         self.visualizer = visualizer
         
-        # Generate frames
-        print("Generating visualization frames...")
+        # Generate frames in session-specific directory
+        print(f"[Session {self.session_id}] Generating visualization frames...")
         self.frame_paths = self.visualizer.create_animation_frames(
             self.results['history'],
-            output_dir='static/frames',
+            output_dir=output_dir,
             frame_prefix='frame'
         )
         
-        # Generate convergence plot
-        self.convergence_path = 'static/frames/convergence.png'
+        # Generate convergence plot in session-specific directory
+        self.convergence_path = f'{output_dir}/convergence.png'
         self.visualizer.plot_convergence(
             self.results['history'],
             save_path=self.convergence_path
@@ -94,13 +110,92 @@ class SimulationManager:
         self.total_frames = len(self.frame_paths)
         self.current_frame = 0
         self.is_running = False
+        self.mark_accessed()
         
-        print(f"Simulation complete! Generated {self.total_frames} frames.")
+        print(f"[Session {self.session_id}] Simulation complete! Generated {self.total_frames} frames.")
 
 
-# Global simulation manager
-sim_manager = SimulationManager()
+def get_or_create_session_id():
+    """Get existing session ID or create new one."""
+    if 'user_id' not in session:
+        session['user_id'] = secrets.token_hex(8)
+        session.permanent = True  # Make session persistent
+        print(f"[Session] Created new session: {session['user_id']}")
+    else:
+        # Reactivate session if it was orphaned
+        session_id = session['user_id']
+        if session_id in orphaned_sessions:
+            orphaned_sessions.discard(session_id)
+            print(f"[Session] Reactivated orphaned session: {session_id}")
+    return session['user_id']
 
+
+def get_session_manager():
+    """Get or create SimulationManager for current session."""
+    session_id = get_or_create_session_id()
+    
+    if session_id not in simulation_managers:
+        simulation_managers[session_id] = SimulationManager(session_id)
+        simulation_locks[session_id] = threading.Lock()
+        print(f"[Session] Created new manager for session: {session_id}")
+    
+    # Mark as accessed
+    simulation_managers[session_id].mark_accessed()
+    
+    return simulation_managers[session_id]
+
+
+def cleanup_old_sessions():
+    """Background thread to cleanup inactive sessions."""
+    while True:
+        time.sleep(1800)  # Run every 30 minutes
+        current_time = time.time()
+        timeout = 7200  # 2 hours
+        
+        sessions_to_remove = []
+        
+        for session_id, manager in list(simulation_managers.items()):
+            # If inactive for > 2 hours and not running
+            if (current_time - manager.last_accessed > timeout and 
+                not manager.is_running):
+                sessions_to_remove.append(session_id)
+            # Mark as orphaned if running but not accessed recently (30 min)
+            elif manager.is_running and (current_time - manager.last_accessed > 1800):
+                if session_id not in orphaned_sessions:
+                    orphaned_sessions.add(session_id)
+                    print(f"[Cleanup] Marked session as orphaned: {session_id}")
+        
+        # Remove old sessions
+        for session_id in sessions_to_remove:
+            try:
+                # Delete files
+                output_dir = f'static/frames/{session_id}'
+                if os.path.exists(output_dir):
+                    shutil.rmtree(output_dir)
+                    print(f"[Cleanup] Deleted frames for session: {session_id}")
+                
+                # Remove from memory
+                del simulation_managers[session_id]
+                if session_id in simulation_locks:
+                    del simulation_locks[session_id]
+                if session_id in orphaned_sessions:
+                    orphaned_sessions.discard(session_id)
+                print(f"[Cleanup] Removed session: {session_id}")
+            except Exception as e:
+                print(f"[Cleanup] Error removing session {session_id}: {e}")
+
+
+def keep_alive():
+    """Keep the application alive."""
+    while True:
+        time.sleep(600)
+        try:
+            if os.getenv('RENDER_EXTERNAL_URL'):
+                url = os.getenv('RENDER_EXTERNAL_URL')
+                response = requests.get(url, timeout=10)
+                print(f"[Keep-Alive] Pinged {url} - Status: {response.status_code}")
+        except Exception as e:
+            print(f"[Keep-Alive] Ping failed: {e}")
 
 @app.route('/')
 def index():
@@ -111,9 +206,10 @@ def index():
 @app.route('/api/start_simulation', methods=['POST'])
 def start_simulation():
     """Start a new simulation with provided parameters."""
-    global simulation_running
+    manager = get_session_manager()
+    session_id = session['user_id']
     
-    if simulation_running:
+    if manager.is_running:
         return jsonify({
             'success': False,
             'message': 'Simulation already running'
@@ -140,9 +236,13 @@ def start_simulation():
             'message': f'Invalid parameters: {str(e)}'
         }), 400
     
-    # Run simulation in background thread
-    simulation_running = True
-    thread = threading.Thread(target=run_simulation_thread, args=(params,))
+    # Ensure lock exists for this session
+    if session_id not in simulation_locks:
+        simulation_locks[session_id] = threading.Lock()
+    
+    # Run simulation in background thread for this session
+    thread = threading.Thread(target=manager.run_simulation, args=(params,))
+    thread.daemon = True
     thread.start()
     
     return jsonify({
@@ -151,51 +251,49 @@ def start_simulation():
     })
 
 
-def run_simulation_thread(params):
-    """Background thread for running simulation."""
-    global simulation_running
-    
-    try:
-        sim_manager.run_simulation(params)
-    except Exception as e:
-        print(f"Simulation error: {e}")
-    finally:
-        simulation_running = False
-
-
 @app.route('/api/simulation_status')
 def simulation_status():
     """Get current simulation status."""
+    manager = get_session_manager()
+    session_id = session.get('user_id')
+    
+    # Check if this session was orphaned and recovered
+    was_orphaned = session_id in orphaned_sessions if session_id else False
+    
     return jsonify({
-        'running': simulation_running,
-        'total_frames': sim_manager.total_frames,
-        'current_frame': sim_manager.current_frame,
-        'best_fitness': sim_manager.results['best_fitness'] if sim_manager.results else None,
-        'best_position': sim_manager.results['best_position'].tolist() if sim_manager.results else None
+        'is_running': manager.is_running,
+        'total_frames': manager.total_frames,
+        'current_frame': manager.current_frame,
+        'best_fitness': manager.results['best_fitness'] if manager.results else None,
+        'best_position': manager.results['best_position'].tolist() if manager.results else None,
+        'session_id': session_id,
+        'recovered': was_orphaned  # Frontend can show recovery message
     })
 
 
 @app.route('/api/get_frame/<int:frame_num>')
 def get_frame(frame_num):
     """Get specific frame information."""
-    if frame_num >= sim_manager.total_frames:
+    manager = get_session_manager()
+    
+    if frame_num >= manager.total_frames:
         return jsonify({
             'success': False,
             'message': 'Frame not available'
         }), 404
     
     # Extract frame filename from path
-    frame_path = sim_manager.frame_paths[frame_num]
-    frame_filename = os.path.basename(frame_path)
+    frame_path = manager.frame_paths[frame_num]
     
     # Get fitness at this iteration
-    fitness = sim_manager.results['history']['global_best_fitness'][frame_num]
+    fitness = manager.results['history']['global_best_fitness'][frame_num]
     
+    # Return session-specific frame URL
     return jsonify({
         'success': True,
-        'frame_url': f'/static/frames/{frame_filename}',
+        'frame_url': f'/{frame_path}',
         'frame_num': frame_num,
-        'total_frames': sim_manager.total_frames,
+        'total_frames': manager.total_frames,
         'fitness': fitness
     })
 
@@ -203,10 +301,12 @@ def get_frame(frame_num):
 @app.route('/api/get_convergence')
 def get_convergence():
     """Get convergence plot."""
-    if sim_manager.convergence_path and os.path.exists(sim_manager.convergence_path):
+    manager = get_session_manager()
+    
+    if manager.convergence_path and os.path.exists(manager.convergence_path):
         return jsonify({
             'success': True,
-            'url': '/' + sim_manager.convergence_path
+            'url': '/' + manager.convergence_path
         })
     else:
         return jsonify({
@@ -218,7 +318,9 @@ def get_convergence():
 @app.route('/api/get_results')
 def get_results():
     """Get final simulation results."""
-    if sim_manager.results is None:
+    manager = get_session_manager()
+    
+    if manager.results is None:
         return jsonify({
             'success': False,
             'message': 'No results available'
@@ -226,22 +328,36 @@ def get_results():
     
     return jsonify({
         'success': True,
-        'best_fitness': sim_manager.results['best_fitness'],
-        'best_position': sim_manager.results['best_position'].tolist(),
-        'iterations': sim_manager.results['iterations']
+        'best_fitness': manager.results['best_fitness'],
+        'best_position': manager.results['best_position'].tolist(),
+        'iterations': manager.results['iterations']
     })
 
 
-@app.route('/static/frames/<path:filename>')
-def serve_frame(filename):
-    """Serve frame images."""
-    return send_from_directory('static/frames', filename)
+@app.route('/static/frames/<session_id>/<path:filename>')
+def serve_frame(session_id, filename):
+    """Serve frame images from session-specific directory."""
+    directory = f'static/frames/{session_id}'
+    if not os.path.exists(directory):
+        return jsonify({'error': 'Session not found'}), 404
+    return send_from_directory(directory, filename)
 
 
 if __name__ == '__main__':
     # Ensure static directory exists
     os.makedirs('static/frames', exist_ok=True)
     
+    # Start cleanup thread
+    cleanup_thread = threading.Thread(target=cleanup_old_sessions, daemon=True)
+    cleanup_thread.start()
+    print("[Cleanup] Session cleanup thread started.")
+
+    # Keep Alive Thread (for Render deployment)
+    if os.getenv("RENDER"):
+        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+        keep_alive_thread.start()
+        print("[Keep-Alive] Thread started.")
+
     print("\n" + "="*60)
     print("CSO Visual Simulator - Cat Swarm Optimization")
     print("="*60)

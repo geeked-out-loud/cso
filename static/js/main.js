@@ -6,7 +6,9 @@ let simulationState = {
     currentFrame: 0,
     totalFrames: 0,
     isPlaying: false,
-    playInterval: null
+    playInterval: null,
+    sessionId: null,
+    wasRecovered: false
 };
 
 // DOM Elements
@@ -47,7 +49,99 @@ prevFrameBtn.addEventListener('click', () => changeFrame(-1));
 playPauseBtn.addEventListener('click', togglePlayPause);
 nextFrameBtn.addEventListener('click', () => changeFrame(1));
 
+// Check for existing session on page load
+window.addEventListener('load', checkExistingSession);
+
 // Start simulation
+// Check for existing session (recovery after refresh)
+async function checkExistingSession() {
+    try {
+        const response = await fetch('/api/simulation_status');
+        const status = await response.json();
+        
+        simulationState.sessionId = status.session_id;
+        
+        // Check if there's an active or completed simulation
+        if (status.is_running) {
+            // Simulation is still running - recover it
+            statusText.textContent = 'Recovering running simulation...';
+            statusIndicator.className = 'status-dot running';
+            
+            if (status.recovered) {
+                showRecoveryMessage('Session recovered! Your simulation is still running.');
+            }
+            
+            simulationState.isRunning = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            loadingSpinner.style.display = 'flex';
+            vizPlaceholder.style.display = 'none';
+            
+            // Continue polling
+            pollSimulationStatus();
+            
+        } else if (status.total_frames > 0) {
+            // Simulation completed while we were gone - restore results
+            statusText.textContent = 'Restoring previous results...';
+            statusIndicator.className = 'status-dot complete';
+            
+            if (status.recovered) {
+                showRecoveryMessage('Session recovered! Your simulation results are ready.');
+            }
+            
+            simulationState.totalFrames = status.total_frames;
+            simulationState.currentFrame = 0;
+            
+            // Enable frame controls
+            prevFrameBtn.disabled = false;
+            playPauseBtn.disabled = false;
+            nextFrameBtn.disabled = false;
+            
+            // Load first frame
+            await loadFrame(0);
+            
+            // Display results
+            displayResults();
+            
+            // Load convergence plot
+            loadConvergencePlot();
+            
+            progressFill.style.width = '100%';
+            statusText.textContent = 'Results restored';
+        }
+    } catch (error) {
+        console.error('Error checking existing session:', error);
+    }
+}
+
+// Show recovery message
+function showRecoveryMessage(message) {
+    const recoveryBanner = document.createElement('div');
+    recoveryBanner.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #4CAF50;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 10000;
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 14px;
+        animation: slideDown 0.3s ease;
+    `;
+    recoveryBanner.textContent = message;
+    document.body.appendChild(recoveryBanner);
+    
+    // Remove after 4 seconds
+    setTimeout(() => {
+        recoveryBanner.style.animation = 'slideUp 0.3s ease';
+        setTimeout(() => recoveryBanner.remove(), 300);
+    }, 4000);
+}
+
 async function startSimulation() {
     // Gather parameters
     const paramValues = {};

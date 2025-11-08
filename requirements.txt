@@ -13,3 +13,6 @@ gunicorn>=21.2.0
 
 # Development dependencies (optional)
 # pytest>=7.4.3
+
+# Keep Alive 
+requests>=2.31.0
