@@ -90,10 +90,10 @@ class CSOVisualizer:
         """
         fig, ax = plt.subplots(figsize=(10, 8))
         
-        # Plot contour
-        contour = ax.contourf(self.X, self.Y, self.Z, levels=30, 
+        # Plot contour with fewer levels for speed
+        contour = ax.contourf(self.X, self.Y, self.Z, levels=20, 
                              cmap='viridis', alpha=0.7)
-        ax.contour(self.X, self.Y, self.Z, levels=15, 
+        ax.contour(self.X, self.Y, self.Z, levels=10, 
                   colors='black', alpha=0.2, linewidths=0.5)
         
         # Add colorbar
@@ -153,7 +153,10 @@ class CSOVisualizer:
         if save_path:
             print(f"[Visualizer] Saving figure to: {save_path}")
             try:
-                plt.savefig(save_path, dpi=100, bbox_inches='tight')
+                # Use lower DPI and optimize for speed
+                plt.savefig(save_path, dpi=80, bbox_inches='tight', 
+                           facecolor='white', edgecolor='none',
+                           format='png', optimize=True)
                 print(f"[Visualizer] Successfully saved: {save_path}")
             except Exception as e:
                 print(f"[Visualizer] ERROR saving figure: {e}")
@@ -193,10 +196,21 @@ class CSOVisualizer:
         
         frame_paths = []
         n_iterations = len(history['positions'])
-        print(f"[Visualizer] Processing {n_iterations} iterations")
         
-        for i in range(n_iterations):
-            print(f"[Visualizer] Creating frame {i+1}/{n_iterations}")
+        # Generate frames at key iterations only (every 5 iterations + first/last)
+        # This reduces from 51 frames to ~12 frames for 50 iterations
+        frame_indices = set([0])  # Always include first frame
+        frame_indices.add(n_iterations - 1)  # Always include last frame
+        
+        # Add every 5th iteration
+        for i in range(0, n_iterations, 5):
+            frame_indices.add(i)
+        
+        frame_indices = sorted(list(frame_indices))
+        print(f"[Visualizer] Generating {len(frame_indices)} frames from {n_iterations} iterations (every 5th iteration)")
+        
+        for frame_num, i in enumerate(frame_indices):
+            print(f"[Visualizer] Creating frame {frame_num+1}/{len(frame_indices)} (iteration {i})")
             positions = history['positions'][i]
             modes = history['modes'][i]
             fitness = history['global_best_fitness'][i]
@@ -207,9 +221,9 @@ class CSOVisualizer:
             best_idx = np.argmin(fitnesses)
             global_best = positions[best_idx]
             
-            # Generate frame
-            frame_path = os.path.join(output_dir, f'{frame_prefix}_{i:04d}.png')
-            print(f"[Visualizer] Plotting frame {i} to {frame_path}")
+            # Generate frame (use frame_num for sequential numbering)
+            frame_path = os.path.join(output_dir, f'{frame_prefix}_{frame_num:04d}.png')
+            print(f"[Visualizer] Plotting iteration {i} to {frame_path}")
             self.plot_frame(positions, modes, global_best, i, fitness, 
                           save_path=frame_path)
             frame_paths.append(frame_path)
@@ -267,7 +281,9 @@ class CSOVisualizer:
         if save_path:
             print(f"[Visualizer] Saving convergence plot to: {save_path}")
             try:
-                plt.savefig(save_path, dpi=100, bbox_inches='tight')
+                plt.savefig(save_path, dpi=80, bbox_inches='tight',
+                           facecolor='white', edgecolor='none',
+                           format='png', optimize=True)
                 print(f"[Visualizer] Convergence plot saved successfully")
             except Exception as e:
                 print(f"[Visualizer] ERROR saving convergence plot: {e}")
