@@ -246,16 +246,45 @@ def cleanup_old_sessions():
 
 
 def keep_alive():
-    """Keep the application alive."""
+    """
+    Keep the application alive by pinging itself every 10 minutes.
+    Prevents Render free tier from sleeping after 15 minutes of inactivity.
+    
+    Note: For production, use an external monitoring service like UptimeRobot.
+    """
+    # Wait 60 seconds before first ping (let server fully start)
+    time.sleep(60)
+    
     while True:
-        time.sleep(600)
         try:
-            if os.getenv('RENDER_EXTERNAL_URL'):
+            # Check if running on Render
+            if os.getenv('RENDER'):
+                # Get external URL from environment
                 url = os.getenv('RENDER_EXTERNAL_URL')
-                response = requests.get(url, timeout=10)
-                print(f"[Keep-Alive] Pinged {url} - Status: {response.status_code}")
+                
+                if url:
+                    # Ping the health endpoint (lightweight)
+                    health_url = f"{url}/health"
+                    print(f"[Keep-Alive] Pinging {health_url}...")
+                    response = requests.get(health_url, timeout=10)
+                    print(f"[Keep-Alive] ✓ Ping successful - Status: {response.status_code}")
+                else:
+                    print(f"[Keep-Alive] RENDER_EXTERNAL_URL not set. Please add it in Render dashboard.")
+                    print(f"[Keep-Alive] Go to Dashboard > Environment > Add Environment Variable")
+                    print(f"[Keep-Alive] Key: RENDER_EXTERNAL_URL, Value: https://your-service.onrender.com")
+            else:
+                # Not on Render, skip (but keep thread alive for consistency)
+                pass
         except Exception as e:
-            print(f"[Keep-Alive] Ping failed: {e}")
+            print(f"[Keep-Alive] ✗ Ping failed: {e}")
+        
+        # Wait 10 minutes before next ping (Render sleeps after 15 min)
+        time.sleep(600)
+
+@app.route('/health')
+def health_check():
+    """Lightweight health check endpoint for keep-alive pings."""
+    return jsonify({'status': 'ok', 'timestamp': time.time()}), 200
 
 @app.route('/')
 def index():
