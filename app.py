@@ -541,19 +541,20 @@ def get_results():
         'iterations': manager.results['iterations']
     })
 
+# Start cleanup thread when module loads
+cleanup_thread = threading.Thread(target=cleanup_old_sessions, daemon=True)
+cleanup_thread.start()
+print("[Cleanup] Session cleanup thread started.")
+
+# Start keep-alive thread if on Render
+if os.getenv("RENDER"):
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    print("[Keep-Alive] Thread started for Render deployment.")
+
 
 if __name__ == '__main__':
-    # Start cleanup thread
-    cleanup_thread = threading.Thread(target=cleanup_old_sessions, daemon=True)
-    cleanup_thread.start()
-    print("[Cleanup] Session cleanup thread started.")
-
-    # Keep Alive Thread (for Render deployment)
-    if os.getenv("RENDER"):
-        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-        keep_alive_thread.start()
-        print("[Keep-Alive] Thread started.")
-
+    # Threads already started above for cleanup and keep-alive
     print("\n" + "="*60)
     print("CSO Visual Simulator - Cat Swarm Optimization")
     print("="*60)
