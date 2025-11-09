@@ -164,7 +164,8 @@
                         <p>Running simulation...</p>
                     </div>
                     
-                    <img id="viz-image" src="" alt="Visualization" class="viz-image">
+                    <!-- Canvas for visualization (replaces img) -->
+                    <canvas id="viz-canvas" width="800" height="800" class="viz-canvas" style="display: none;"></canvas>
                     
                     <div id="viz-placeholder" class="viz-placeholder">
                         <img src="{{ url_for('static', filename='cat.png') }}" alt="Placeholder" class="placeholder-icon">
@@ -203,10 +204,10 @@
                     </div>
                 </div>
 
-                <!-- Convergence Chart -->
+                <!-- Convergence Chart (SVG container replaces img) -->
                 <div class="convergence-card" id="convergence-section" style="display: none;">
                     <h3 class="card-title">Convergence Analysis</h3>
-                    <img id="convergence-plot" src="" alt="Convergence plot" class="convergence-image">
+                    <div id="convergence-container" class="convergence-container"></div>
                 </div>
             </div>
         </main>

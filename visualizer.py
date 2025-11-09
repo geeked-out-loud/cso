@@ -1,311 +1,152 @@
-"""
+﻿"""
 Visualization Module for CSO Simulation
 
-Generates 2D contour plots of the Rastrigin function with cat positions
-overlaid, distinguishing between seeking and tracing modes.
+Prepares data for client-side Canvas rendering and generates SVG convergence plots.
+No longer generates matplotlib PNGs for frames - that's done client-side for performance.
 """
 
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')  # Use non-GUI backend for Flask
-
-# Configure matplotlib for headless server environment
-import matplotlib.pyplot as plt
-plt.ioff()  # Turn off interactive mode
-import matplotlib.font_manager
-# Disable font caching to avoid hanging on first use
-matplotlib.font_manager._load_fontmanager(try_read_cache=False)
-
-from matplotlib import cm
-import os
 
 
 class CSOVisualizer:
     """
     Visualizer for Cat Swarm Optimization on 2D functions.
+    Prepares data for client-side rendering instead of server-side image generation.
     """
     
-    def __init__(self, fitness_func, bounds=(-5.12, 5.12), resolution=200):
-        """
-        Initialize visualizer.
-        
-        Parameters:
-        -----------
-        fitness_func : callable
-            Function to visualize (should accept x, y coordinates)
-        bounds : tuple
-            (min, max) bounds for plotting
-        resolution : int
-            Grid resolution for contour plot
-        """
+    def __init__(self, fitness_func, bounds=(-5.12, 5.12)):
+        """Initialize visualizer."""
         self.fitness_func = fitness_func
         self.bounds = bounds
-        self.resolution = resolution
-        
-        # Create meshgrid for contour plot
-        x = np.linspace(bounds[0], bounds[1], resolution)
-        y = np.linspace(bounds[0], bounds[1], resolution)
-        self.X, self.Y = np.meshgrid(x, y)
-        
-        # Evaluate function on grid
-        self.Z = self._evaluate_grid()
-        
-        # Setup plot style
-        plt.style.use('seaborn-v0_8-darkgrid')
     
-    def _evaluate_grid(self):
-        """Evaluate fitness function on meshgrid."""
-        Z = np.zeros_like(self.X)
-        for i in range(self.X.shape[0]):
-            for j in range(self.X.shape[1]):
-                Z[i, j] = self.fitness_func(np.array([self.X[i, j], self.Y[i, j]]))
-        return Z
-    
-    def plot_frame(self, positions, modes, global_best_pos, iteration, 
-                   fitness_value, save_path=None, show_trajectory=False):
-        """
-        Generate a single frame showing cat positions on Rastrigin landscape.
+    def prepare_frame_data(self, history):
+        """Prepare frame data for client-side Canvas rendering."""
+        print(f"[Visualizer] Preparing frame data for client-side rendering")
         
-        Parameters:
-        -----------
-        positions : array-like
-            Cat positions, shape (n_cats, 2)
-        modes : list
-            Mode for each cat ('seeking' or 'tracing')
-        global_best_pos : array-like
-            Global best position
-        iteration : int
-            Current iteration number
-        fitness_value : float
-            Current best fitness value
-        save_path : str
-            Path to save image (if None, returns figure)
-        show_trajectory : bool
-            Whether to show trajectory lines (for future enhancement)
-            
-        Returns:
-        --------
-        str or Figure
-            Save path or matplotlib Figure object
-        """
-        fig, ax = plt.subplots(figsize=(10, 8))
-        
-        # Plot contour with fewer levels for speed
-        contour = ax.contourf(self.X, self.Y, self.Z, levels=20, 
-                             cmap='viridis', alpha=0.7)
-        ax.contour(self.X, self.Y, self.Z, levels=10, 
-                  colors='black', alpha=0.2, linewidths=0.5)
-        
-        # Add colorbar
-        cbar = plt.colorbar(contour, ax=ax)
-        cbar.set_label('Fitness Value', rotation=270, labelpad=20)
-        
-        # Separate cats by mode
-        positions = np.array(positions)
-        seeking_cats = positions[[i for i, m in enumerate(modes) if m == 'seeking']]
-        tracing_cats = positions[[i for i, m in enumerate(modes) if m == 'tracing']]
-        
-        # Plot seeking cats (blue circles)
-        if len(seeking_cats) > 0:
-            ax.scatter(seeking_cats[:, 0], seeking_cats[:, 1], 
-                      c='blue', marker='o', s=100, alpha=0.8,
-                      edgecolors='white', linewidths=1.5, 
-                      label=f'Seeking ({len(seeking_cats)} cats)', zorder=5)
-        
-        # Plot tracing cats (red triangles)
-        if len(tracing_cats) > 0:
-            ax.scatter(tracing_cats[:, 0], tracing_cats[:, 1], 
-                      c='red', marker='^', s=120, alpha=0.8,
-                      edgecolors='white', linewidths=1.5,
-                      label=f'Tracing ({len(tracing_cats)} cats)', zorder=5)
-        
-        # Plot global best (gold star)
-        ax.scatter(global_best_pos[0], global_best_pos[1], 
-                  c='gold', marker='*', s=500, alpha=1.0,
-                  edgecolors='black', linewidths=2,
-                  label='Global Best', zorder=10)
-        
-        # Plot true optimum (green x)
-        ax.scatter(0, 0, c='lime', marker='x', s=200, 
-                  linewidths=3, label='True Optimum', zorder=6)
-        
-        # Labels and title
-        ax.set_xlabel('X', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Y', fontsize=12, fontweight='bold')
-        ax.set_title(f'Cat Swarm Optimization - Iteration {iteration}\n'
-                    f'Best Fitness: {fitness_value:.6f}', 
-                    fontsize=14, fontweight='bold', pad=20)
-        
-        # Legend
-        ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
-        
-        # Grid
-        ax.grid(True, alpha=0.3, linestyle='--')
-        
-        # Set bounds
-        ax.set_xlim(self.bounds[0], self.bounds[1])
-        ax.set_ylim(self.bounds[0], self.bounds[1])
-        
-        # Tight layout
-        plt.tight_layout()
-        
-        # Save or return
-        if save_path:
-            print(f"[Visualizer] Saving figure to: {save_path}")
-            try:
-                # Use lower DPI and optimize for speed
-                plt.savefig(save_path, dpi=80, bbox_inches='tight', 
-                           facecolor='white', edgecolor='none',
-                           format='png', optimize=True)
-                print(f"[Visualizer] Successfully saved: {save_path}")
-            except Exception as e:
-                print(f"[Visualizer] ERROR saving figure: {e}")
-                import traceback
-                traceback.print_exc()
-                raise
-            finally:
-                plt.close(fig)
-            return save_path
-        else:
-            return fig
-    
-    def create_animation_frames(self, history, output_dir='static/frames', 
-                               frame_prefix='frame'):
-        """
-        Create frames for all iterations in history.
-        
-        Parameters:
-        -----------
-        history : dict
-            History dict from CSO optimizer
-        output_dir : str
-            Directory to save frames
-        frame_prefix : str
-            Prefix for frame filenames
-            
-        Returns:
-        --------
-        list
-            List of frame file paths
-        """
-        print(f"[Visualizer] Creating animation frames in: {output_dir}")
-        
-        # Create output directory if needed
-        os.makedirs(output_dir, exist_ok=True)
-        print(f"[Visualizer] Directory ready")
-        
-        frame_paths = []
+        frames = []
         n_iterations = len(history['positions'])
         
-        # Generate frames at key iterations only (every 5 iterations + first/last)
-        # This reduces from 51 frames to ~12 frames for 50 iterations
-        frame_indices = set([0])  # Always include first frame
-        frame_indices.add(n_iterations - 1)  # Always include last frame
+        frame_indices = set([0])
+        frame_indices.add(n_iterations - 1)
         
-        # Add every 5th iteration
         for i in range(0, n_iterations, 5):
             frame_indices.add(i)
         
         frame_indices = sorted(list(frame_indices))
-        print(f"[Visualizer] Generating {len(frame_indices)} frames from {n_iterations} iterations (every 5th iteration)")
+        print(f"[Visualizer] Preparing {len(frame_indices)} frames from {n_iterations} iterations")
         
-        for frame_num, i in enumerate(frame_indices):
-            print(f"[Visualizer] Creating frame {frame_num+1}/{len(frame_indices)} (iteration {i})")
+        for i in frame_indices:
             positions = history['positions'][i]
             modes = history['modes'][i]
-            fitness = history['global_best_fitness'][i]
-            
-            # Get global best position at this iteration
-            # Find the cat with best fitness
             fitnesses = history['fitnesses'][i]
+            global_best_fitness = history['global_best_fitness'][i]
+            
             best_idx = np.argmin(fitnesses)
-            global_best = positions[best_idx]
+            global_best_position = positions[best_idx]
             
-            # Generate frame (use frame_num for sequential numbering)
-            frame_path = os.path.join(output_dir, f'{frame_prefix}_{frame_num:04d}.png')
-            print(f"[Visualizer] Plotting iteration {i} to {frame_path}")
-            self.plot_frame(positions, modes, global_best, i, fitness, 
-                          save_path=frame_path)
-            frame_paths.append(frame_path)
-            print(f"[Visualizer] Frame {i} complete")
+            frame_data = {
+                'iteration': int(i),
+                'positions': positions,
+                'modes': modes.tolist() if hasattr(modes, 'tolist') else list(modes),
+                'fitnesses': fitnesses,
+                'global_best_fitness': float(global_best_fitness),
+                'global_best_position': global_best_position
+            }
+            
+            frames.append(frame_data)
         
-        print(f"[Visualizer] All {len(frame_paths)} frames created successfully")
-        return frame_paths
+        print(f"[Visualizer] Successfully prepared {len(frames)} frames")
+        return frames
     
-    def plot_convergence(self, history, save_path=None):
-        """
-        Plot convergence curve (fitness vs iteration).
+    def create_convergence_svg(self, history, width=800, height=400):
+        """Generate convergence plot as SVG string."""
+        print(f"[Visualizer] Creating convergence SVG")
         
-        Parameters:
-        -----------
-        history : dict
-            History dict from CSO optimizer
-        save_path : str
-            Path to save plot
-            
-        Returns:
-        --------
-        str or Figure
-            Save path or Figure object
-        """
-        print(f"[Visualizer] Creating convergence plot")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        iterations = range(len(history['global_best_fitness']))
+        iterations = list(range(len(history['global_best_fitness'])))
         fitness_values = history['global_best_fitness']
         
-        # Plot fitness curve
-        ax.plot(iterations, fitness_values, 'b-', linewidth=2, 
-               label='Best Fitness')
-        ax.scatter(iterations, fitness_values, c='blue', s=20, alpha=0.5)
+        max_iter = len(iterations)
+        max_fitness = max(fitness_values)
+        min_fitness = min(fitness_values[1:] if len(fitness_values) > 1 else [0])
         
-        # Horizontal line at optimum
-        ax.axhline(y=0, color='green', linestyle='--', linewidth=2, 
-                  label='Global Optimum (0)', alpha=0.7)
+        use_log = max_fitness > 100 * min_fitness and min_fitness > 0
         
-        # Labels
-        ax.set_xlabel('Iteration', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Best Fitness Value', fontsize=12, fontweight='bold')
-        ax.set_title('CSO Convergence Curve', fontsize=14, fontweight='bold')
+        margin_left = 80
+        margin_right = 40
+        margin_top = 50
+        margin_bottom = 70
+        plot_width = width - margin_left - margin_right
+        plot_height = height - margin_top - margin_bottom
         
-        # Log scale for y-axis if values are very different
-        if max(fitness_values) > 100 * min(fitness_values[1:] if len(fitness_values) > 1 else [1]):
-            ax.set_yscale('log')
-            ax.set_ylabel('Best Fitness Value (log scale)', fontsize=12, fontweight='bold')
+        def scale_x(iter_num):
+            return margin_left + (iter_num / max(max_iter - 1, 1)) * plot_width
         
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3)
+        def scale_y(fitness):
+            if use_log:
+                fitness = max(fitness, 0.0001)
+                log_min = np.log10(min_fitness) if min_fitness > 0 else -4
+                log_max = np.log10(max_fitness)
+                log_val = np.log10(fitness)
+                normalized = (log_val - log_min) / max(log_max - log_min, 0.001)
+            else:
+                fitness_range = max_fitness - min_fitness
+                normalized = (fitness - min_fitness) / max(fitness_range, 0.001) if fitness_range > 0 else 0
+            return margin_top + plot_height - normalized * plot_height
         
-        plt.tight_layout()
+        svg_parts = []
+        svg_parts.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">')
+        svg_parts.append(f'<rect width="{width}" height="{height}" fill="#fafafa"/>')
+        svg_parts.append(f'<rect x="{margin_left}" y="{margin_top}" width="{plot_width}" height="{plot_height}" fill="white" stroke="#ddd" stroke-width="2"/>')
         
-        if save_path:
-            print(f"[Visualizer] Saving convergence plot to: {save_path}")
-            try:
-                plt.savefig(save_path, dpi=80, bbox_inches='tight',
-                           facecolor='white', edgecolor='none',
-                           format='png', optimize=True)
-                print(f"[Visualizer] Convergence plot saved successfully")
-            except Exception as e:
-                print(f"[Visualizer] ERROR saving convergence plot: {e}")
-                import traceback
-                traceback.print_exc()
-                raise
-            finally:
-                plt.close(fig)
-            return save_path
-        else:
-            return fig
-    
-    def clean_frames(self, output_dir='static/frames'):
-        """
-        Remove all frame images from directory.
+        for i in range(6):
+            y = margin_top + (i / 5) * plot_height
+            svg_parts.append(f'<line x1="{margin_left}" y1="{y}" x2="{width - margin_right}" y2="{y}" stroke="#eee" stroke-width="1"/>')
         
-        Parameters:
-        -----------
-        output_dir : str
-            Directory containing frames
-        """
-        if os.path.exists(output_dir):
-            for filename in os.listdir(output_dir):
-                if filename.endswith('.png'):
-                    os.remove(os.path.join(output_dir, filename))
+        for i in range(6):
+            x = margin_left + (i / 5) * plot_width
+            svg_parts.append(f'<line x1="{x}" y1="{margin_top}" x2="{x}" y2="{height - margin_bottom}" stroke="#eee" stroke-width="1"/>')
+        
+        points = ' '.join([f'{scale_x(i)},{scale_y(fitness_values[i])}' for i in iterations])
+        svg_parts.append(f'<polyline points="{points}" fill="none" stroke="#FF9B71" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>')
+        
+        for i in iterations:
+            x = scale_x(i)
+            y = scale_y(fitness_values[i])
+            svg_parts.append(f'<circle cx="{x}" cy="{y}" r="4" fill="#FF7A47" stroke="white" stroke-width="2"/>')
+        
+        svg_parts.append(f'<line x1="{margin_left}" y1="{height - margin_bottom}" x2="{width - margin_right}" y2="{height - margin_bottom}" stroke="#333" stroke-width="2"/>')
+        svg_parts.append(f'<line x1="{margin_left}" y1="{margin_top}" x2="{margin_left}" y2="{height - margin_bottom}" stroke="#333" stroke-width="2"/>')
+        svg_parts.append(f'<text x="{width / 2}" y="{height - 15}" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#333">Iteration</text>')
+        
+        y_label = "Fitness (log scale)" if use_log else "Fitness"
+        svg_parts.append(f'<text x="20" y="{height / 2}" text-anchor="middle" transform="rotate(-90 20 {height/2})" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#333">{y_label}</text>')
+        svg_parts.append(f'<text x="{width / 2}" y="30" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" fill="#2D2D2D">Convergence Curve</text>')
+        
+        num_x_ticks = min(6, max_iter + 1)
+        for i in range(num_x_ticks):
+            iter_val = int((i / max(num_x_ticks - 1, 1)) * (max_iter - 1)) if max_iter > 1 else 0
+            x = scale_x(iter_val)
+            svg_parts.append(f'<line x1="{x}" y1="{height - margin_bottom}" x2="{x}" y2="{height - margin_bottom + 6}" stroke="#333" stroke-width="2"/>')
+            svg_parts.append(f'<text x="{x}" y="{height - margin_bottom + 22}" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" fill="#666">{iter_val}</text>')
+        
+        num_y_ticks = 6
+        for i in range(num_y_ticks):
+            if use_log and min_fitness > 0:
+                log_range = np.log10(max_fitness) - np.log10(min_fitness)
+                log_val = np.log10(min_fitness) + (i / (num_y_ticks - 1)) * log_range
+                val = 10 ** log_val
+                label = f'{val:.2e}'
+            else:
+                fitness_range = max_fitness - min_fitness
+                val = min_fitness + (i / (num_y_ticks - 1)) * fitness_range
+                label = f'{val:.4f}' if val < 1 else f'{val:.2f}'
+            
+            y = margin_top + plot_height - (i / (num_y_ticks - 1)) * plot_height
+            svg_parts.append(f'<line x1="{margin_left - 6}" y1="{y}" x2="{margin_left}" y2="{y}" stroke="#333" stroke-width="2"/>')
+            svg_parts.append(f'<text x="{margin_left - 10}" y="{y + 4}" text-anchor="end" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#666">{label}</text>')
+        
+        svg_parts.append('</svg>')
+        
+        svg_string = '\n'.join(svg_parts)
+        print(f"[Visualizer] Convergence SVG created successfully ({len(svg_string)} bytes)")
+        return svg_string

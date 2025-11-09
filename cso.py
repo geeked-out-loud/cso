@@ -251,7 +251,7 @@ class CatSwarmOptimizer:
         self.history['modes'].append([cat.mode for cat in self.cats])
         self.history['fitnesses'].append([cat.fitness for cat in self.cats])
     
-    def optimize(self, verbose=True):
+    def optimize(self, verbose=True, progress_callback=None):
         """
         Run the CSO optimization algorithm.
         
@@ -259,6 +259,8 @@ class CatSwarmOptimizer:
         -----------
         verbose : bool
             Print progress information
+        progress_callback : callable, optional
+            Callback function(iteration, max_iter, best_fitness) called each iteration
             
         Returns:
         --------
@@ -271,6 +273,10 @@ class CatSwarmOptimizer:
         
         if verbose:
             print(f"Initial best fitness: {self.global_best_fitness:.6f}")
+        
+        # Send initial progress update
+        if progress_callback:
+            progress_callback(0, self.max_iter, self.global_best_fitness)
         
         # Main optimization loop
         for iteration in range(self.max_iter):
@@ -287,6 +293,10 @@ class CatSwarmOptimizer:
             
             # Record history
             self.record_history()
+            
+            # Send progress update every 5 iterations
+            if progress_callback and (iteration + 1) % 5 == 0:
+                progress_callback(iteration + 1, self.max_iter, self.global_best_fitness)
             
             if verbose and (iteration + 1) % 10 == 0:
                 print(f"Iteration {iteration + 1}/{self.max_iter} | "

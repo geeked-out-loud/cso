@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, session
+from flask import Flask, render_template, request, jsonify, send_from_directory, session, Response, stream_with_context
 import os
 import json
 import threading
@@ -7,6 +7,7 @@ import requests
 import secrets
 import shutil
 import time
+import queue
 
 from cso import CatSwarmOptimizer
 from rastrigin import rastrigin
@@ -29,23 +30,6 @@ simulation_managers = {}  # {session_id: SimulationManager}
 simulation_locks = {}     # {session_id: threading.Lock}
 orphaned_sessions = set()  # Track sessions with running sims but disconnected clients
 
-# Ensure frames directory exists at startup
-FRAMES_DIR = os.path.join(os.path.dirname(__file__), 'static', 'frames')
-print(f"[STARTUP] Checking frames directory: {FRAMES_DIR}")
-try:
-    os.makedirs(FRAMES_DIR, exist_ok=True)
-    print(f"[STARTUP] Frames directory ready")
-    # Test write permissions
-    test_file = os.path.join(FRAMES_DIR, '.test')
-    with open(test_file, 'w') as f:
-        f.write('test')
-    os.remove(test_file)
-    print(f"[STARTUP] Write permissions confirmed")
-except Exception as e:
-    print(f"[STARTUP] ERROR with frames directory: {e}")
-    import traceback
-    traceback.print_exc()
-
 
 class SimulationManager:
     """Manages simulation state and execution for a single session."""
@@ -55,13 +39,22 @@ class SimulationManager:
         self.optimizer = None
         self.visualizer = None
         self.results = None
-        self.frame_paths = []
+        self.frame_data = []  # Changed from frame_paths to frame_data (JSON)
         self.is_running = False
         self.current_frame = 0
         self.total_frames = 0
-        self.convergence_path = None
+        self.convergence_svg = None  # Changed from convergence_path to SVG string
+        self.visualization_ready = False  # Track if visualization is complete
         self.last_accessed = time.time()  # For cleanup
         self.created_at = datetime.now()
+        self.event_queue = queue.Queue()  # For SSE updates
+    
+    def send_update(self, event_type, data):
+        """Send update to client via Server-Sent Events."""
+        self.event_queue.put({
+            'event': event_type,
+            'data': data
+        })
     
     def mark_accessed(self):
         """Update last access timestamp."""
@@ -80,17 +73,10 @@ class SimulationManager:
             self.is_running = True
             self.mark_accessed()
             
-            # Session-specific output directory
-            output_dir = f'static/frames/{self.session_id}'
-            print(f"[Session {self.session_id}] Creating directory: {output_dir}")
-            os.makedirs(output_dir, exist_ok=True)
-            print(f"[Session {self.session_id}] Directory created successfully")
-            
-            # Clean previous frames for THIS session
+            # No longer need session-specific output directory (no files!)
             print(f"[Session {self.session_id}] Initializing visualizer...")
             visualizer = CSOVisualizer(rastrigin.evaluate, bounds=(-5.12, 5.12))
-            visualizer.clean_frames(output_dir=output_dir)
-            print(f"[Session {self.session_id}] Cleaned previous frames")
+            print(f"[Session {self.session_id}] Visualizer initialized")
             
             # Initialize optimizer
             print(f"[Session {self.session_id}] Initializing optimizer with params: {params}")
@@ -111,34 +97,72 @@ class SimulationManager:
             
             # Run optimization
             print(f"[Session {self.session_id}] Starting optimization...")
-            self.results = self.optimizer.optimize(verbose=True)
+            
+            # Send started event
+            self.send_update('started', {
+                'message': 'Optimization started',
+                'max_iter': params.get('max_iter', 50)
+            })
+            
+            # Define progress callback for SSE updates
+            def on_progress(iteration, max_iter, best_fitness):
+                self.send_update('progress', {
+                    'iteration': iteration,
+                    'max_iter': max_iter,
+                    'best_fitness': float(best_fitness),
+                    'progress_percent': int((iteration / max_iter) * 100)
+                })
+            
+            # Run optimization with progress callback
+            self.results = self.optimizer.optimize(verbose=True, progress_callback=on_progress)
             print(f"[Session {self.session_id}] Optimization complete")
+            
+            # Send optimization complete event
+            self.send_update('optimization_complete', {
+                'message': 'Optimization complete, generating visualization...',
+                'best_fitness': float(self.results['best_fitness'])
+            })
+            
+            # Mark visualization as NOT ready yet (optimization complete but frames not generated)
+            self.visualization_ready = False
             
             # Create visualizer
             self.visualizer = visualizer
             
-            # Generate frames in session-specific directory
-            print(f"[Session {self.session_id}] Generating visualization frames...")
-            self.frame_paths = self.visualizer.create_animation_frames(
-                self.results['history'],
-                output_dir=output_dir,
-                frame_prefix='frame'
-            )
-            print(f"[Session {self.session_id}] Generated {len(self.frame_paths)} frames")
+            # Prepare frame data (no file generation!)
+            print(f"[Session {self.session_id}] Preparing frame data for client-side rendering...")
+            self.send_update('generating_frames', {
+                'message': 'Preparing visualization data...'
+            })
             
-            # Generate convergence plot in session-specific directory
-            self.convergence_path = f'{output_dir}/convergence.png'
-            print(f"[Session {self.session_id}] Creating convergence plot...")
-            self.visualizer.plot_convergence(
-                self.results['history'],
-                save_path=self.convergence_path
+            self.frame_data = self.visualizer.prepare_frame_data(
+                self.results['history']
             )
-            print(f"[Session {self.session_id}] Convergence plot created")
+            print(f"[Session {self.session_id}] Prepared {len(self.frame_data)} frames")
             
-            self.total_frames = len(self.frame_paths)
+            # Generate convergence SVG (no file saving!)
+            print(f"[Session {self.session_id}] Creating convergence SVG...")
+            self.convergence_svg = self.visualizer.create_convergence_svg(
+                self.results['history']
+            )
+            print(f"[Session {self.session_id}] Convergence SVG created")
+            
+            self.total_frames = len(self.frame_data)
             self.current_frame = 0
+            
+            # NOW mark visualization as ready (all frames generated)
+            self.visualization_ready = True
+            
             self.is_running = False
             self.mark_accessed()
+            
+            # Send completion event
+            self.send_update('complete', {
+                'message': 'Simulation complete!',
+                'total_frames': self.total_frames,
+                'best_fitness': float(self.results['best_fitness']),
+                'best_position': self.results['best_position'].tolist()
+            })
             
             print(f"[Session {self.session_id}] Simulation complete! Generated {self.total_frames} frames.")
             
@@ -146,6 +170,7 @@ class SimulationManager:
             print(f"[Session {self.session_id}] FATAL ERROR in run_simulation: {e}")
             import traceback
             traceback.print_exc()
+            self.visualization_ready = False
             self.is_running = False
             raise
 
@@ -310,54 +335,158 @@ def simulation_status():
     # Check if this session was orphaned and recovered
     was_orphaned = session_id in orphaned_sessions if session_id else False
     
+    # Only return results and frame count when visualization is ready
+    # This prevents race condition where optimization completes but frames aren't generated yet
+    has_results = manager.results is not None and manager.visualization_ready
+    
     return jsonify({
         'is_running': manager.is_running,
-        'total_frames': manager.total_frames,
+        'total_frames': manager.total_frames if manager.visualization_ready else 0,
         'current_frame': manager.current_frame,
-        'best_fitness': manager.results['best_fitness'] if manager.results else None,
-        'best_position': manager.results['best_position'].tolist() if manager.results else None,
+        'best_fitness': manager.results['best_fitness'] if has_results else None,
+        'best_position': manager.results['best_position'].tolist() if has_results else None,
         'session_id': session_id,
         'recovered': was_orphaned  # Frontend can show recovery message
     })
 
 
-@app.route('/api/get_frame/<int:frame_num>')
-def get_frame(frame_num):
-    """Get specific frame information."""
-    manager = get_session_manager()
-    
-    if frame_num >= manager.total_frames:
+@app.route('/api/simulation_stream')
+def simulation_stream():
+    """Server-Sent Events stream for real-time simulation updates."""
+    print("[SSE] simulation_stream endpoint called")
+    try:
+        session_id = session.get('user_id')
+        print(f"[SSE] Session ID: {session_id}")
+        
+        manager = get_session_manager()
+        print(f"[SSE] Got manager for session: {manager.session_id}")
+        
+        def event_stream():
+            """Generate SSE events from the simulation."""
+            try:
+                # Send initial connection event
+                print(f"[SSE] Sending connected event")
+                yield f"event: connected\n"
+                yield f"data: {json.dumps({'message': 'Connected to simulation stream'})}\n\n"
+                
+                while True:
+                    try:
+                        # Wait for event with timeout
+                        event = manager.event_queue.get(timeout=30)
+                        
+                        # Format as SSE
+                        event_type = event['event']
+                        event_data = json.dumps(event['data'])
+                        
+                        yield f"event: {event_type}\n"
+                        yield f"data: {event_data}\n\n"
+                        
+                        # Stop stream if simulation complete
+                        if event_type == 'complete':
+                            break
+                            
+                    except queue.Empty:
+                        # Send heartbeat every 30s to keep connection alive
+                        yield f"event: heartbeat\n"
+                        yield f"data: {{}}\n\n"
+                        
+            except GeneratorExit:
+                # Client disconnected
+                print(f"[Session {manager.session_id}] SSE client disconnected")
+            except Exception as e:
+                # Error in stream
+                print(f"[Session {manager.session_id}] SSE stream error: {e}")
+                yield f"event: error\n"
+                yield f"data: {json.dumps({'message': str(e)})}\n\n"
+        
+        return Response(
+            stream_with_context(event_stream()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no'  # Disable nginx buffering
+            }
+        )
+    except Exception as e:
+        print(f"[SSE] Error creating stream: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to create event stream', 'message': str(e)}), 500
+
+
+@app.route('/api/get_frame_data/<int:frame_num>')
+def get_frame_data(frame_num):
+    """Get frame data as JSON for client-side Canvas rendering."""
+    try:
+        manager = get_session_manager()
+        
+        if not manager.frame_data or frame_num >= len(manager.frame_data):
+            return jsonify({
+                'success': False,
+                'message': 'Frame not available'
+            }), 404
+        
+        frame = manager.frame_data[frame_num]
+        
+        # Convert numpy arrays to lists for JSON serialization
+        import numpy as np
+        
+        def to_list(obj):
+            """Convert numpy array to list, or return as-is if already a list."""
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, list):
+                # Handle list of numpy arrays
+                return [to_list(item) for item in obj]
+            return obj
+        
+        try:
+            response_data = {
+                'success': True,
+                'iteration': int(frame['iteration']),
+                'positions': to_list(frame['positions']),
+                'modes': to_list(frame['modes']) if isinstance(frame['modes'], np.ndarray) else list(frame['modes']),
+                'fitnesses': to_list(frame['fitnesses']),
+                'global_best_fitness': float(frame['global_best_fitness']),
+                'global_best_position': to_list(frame['global_best_position']) if frame['global_best_position'] is not None else [0, 0],
+                'frame_num': int(frame_num),
+                'total_frames': int(manager.total_frames)
+            }
+        except Exception as conv_error:
+            print(f"[API] ERROR converting frame data: {conv_error}")
+            print(f"[API] Frame keys: {frame.keys()}")
+            for key, value in frame.items():
+                print(f"[API]   {key}: type={type(value)}, shape={getattr(value, 'shape', 'N/A')}")
+            raise
+        
+        print(f"[API] Sending frame {frame_num} data - iteration: {response_data['iteration']}, positions: {len(response_data['positions'])}")
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"[API] ERROR in get_frame_data: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
-            'message': 'Frame not available'
-        }), 404
-    
-    # Extract frame filename from path
-    frame_path = manager.frame_paths[frame_num]
-    
-    # Get fitness at this iteration
-    fitness = manager.results['history']['global_best_fitness'][frame_num]
-    
-    # Return session-specific frame URL
-    return jsonify({
-        'success': True,
-        'frame_url': f'/{frame_path}',
-        'frame_num': frame_num,
-        'total_frames': manager.total_frames,
-        'fitness': fitness
-    })
+            'message': f'Error: {str(e)}'
+        }), 500
 
 
-@app.route('/api/get_convergence')
-def get_convergence():
-    """Get convergence plot."""
+@app.route('/api/get_convergence_svg')
+def get_convergence_svg():
+    """Get convergence plot as SVG."""
     manager = get_session_manager()
     
-    if manager.convergence_path and os.path.exists(manager.convergence_path):
-        return jsonify({
-            'success': True,
-            'url': '/' + manager.convergence_path
-        })
+    if manager.convergence_svg:
+        return Response(
+            manager.convergence_svg,
+            mimetype='image/svg+xml',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Content-Type': 'image/svg+xml'
+            }
+        )
     else:
         return jsonify({
             'success': False,
@@ -384,19 +513,7 @@ def get_results():
     })
 
 
-@app.route('/static/frames/<session_id>/<path:filename>')
-def serve_frame(session_id, filename):
-    """Serve frame images from session-specific directory."""
-    directory = f'static/frames/{session_id}'
-    if not os.path.exists(directory):
-        return jsonify({'error': 'Session not found'}), 404
-    return send_from_directory(directory, filename)
-
-
 if __name__ == '__main__':
-    # Ensure static directory exists
-    os.makedirs('static/frames', exist_ok=True)
-    
     # Start cleanup thread
     cleanup_thread = threading.Thread(target=cleanup_old_sessions, daemon=True)
     cleanup_thread.start()

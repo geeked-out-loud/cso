@@ -467,13 +467,16 @@ body {
     justify-content: center;
 }
 
-.viz-image {
+/* Canvas visualization */
+.viz-canvas {
     width: 100%;
     height: auto;
     display: none;
+    border-radius: var(--radius-md);
+    background: white;
 }
 
-.viz-image.active {
+.viz-canvas.active {
     display: block;
 }
 
@@ -627,9 +630,20 @@ body {
     margin-bottom: 20px;
 }
 
-.convergence-image {
+/* SVG convergence container */
+.convergence-container {
     width: 100%;
     height: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.convergence-container svg {
+    width: 100%;
+    height: auto;
+    max-width: 800px;
+    display: block;
     border-radius: var(--radius-md);
 }
 
